@@ -1,0 +1,7 @@
+
+debug:
+	$(CC) -Wall -Wextra -Wfatal-errors -g -Og -I../include main.c helpers.c -o main
+
+all:
+	$(CC) -Wall -Wextra -Wfatal-errors -Os -I../include main.c helpers.c \
+		-o main
