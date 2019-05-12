@@ -1,77 +1,144 @@
+#define _GNU_SOURCE
 #include <getopt.h>
 #include <sysexits.h>
 #include <sys/stat.h>
-#include <string.h>
-#include <errno.h>
 #include "roc.h"
-
-#define FMT_STR "%s\n"
-
-static char *usage = "Usage:\n\
- roc -[fch] [FILE...] [DIR..]\n\
- -f,    do not watch files matching this regex\n\
- -c,    run this command e.g [make -CFLAGS+=-g]\n\
+#include "roc_common.h"
+#include "runner.h"
+#include <dirent.h>
+#include "sig_handler.h"
+static char *usage =
+                "Usage:\n\
+ roc -[fchmd] [FILE...] [DIR..]\n\
+ -f,    do not run command on change of files matching this regex\n\
+ -c,    run this command\n\
  -h,    print help and exit\n\
- -m,    mask [comma separated list of masks] default for files [MOD] for \
-directory\n        [OPEN] by default prints events to stdout\n\
- -d,    do not match directories matching this regex\n\
+ -m,    mask\n\
+ -d,    do not execute command on change of directories matching this regex\n\
  -i,    ignore case while matching regex\n\n\
-valid values for mask IN_OPEN, IN_MOVED_TO, IN_MOVED_FROM, IN_MOVE_SELF,\
-IN_MODIFY,\n IN_DELETE_SELF, IN_DELETE, IN_CREATE, IN_CLOSE_NOWRITE,\
-IN_CLOSE_WRITE, IN_ATTRIB,\n IN_ACCESS, IN_DONT_FOLLOW, IN_EXCL_UNLINK,\
-IN_ONESHOT, IN_ONLYDIR, IN_ALL_EVENTS";
+ -r,    recursively add watch for directory DIR\n\n\
+by default reports all events to stdout\n\n\
+valid values for mask\n\
+a:    IN_ACCESS\n\
+b:    IN_MODIFY\n\
+c:    IN_ATTRIB\n\
+d:    IN_CLOSE_WRITE\n\
+e:    IN_CLOSE_NOWRITE\n\
+f:    IN_CREATE\n\
+g:    IN_DELETE\n\
+h:    IN_DELETE_SELF\n\
+i:    IN_MODIFY\n\
+j:    IN_MOVE_SELF\n\
+k:    IN_MOVED_FROM\n\
+l:    IN_MOVED_TO\n\
+m:    IN_OPEN\n\
+n:    IN_DONT_FOLLOW\n\
+o:    IN_EXCL_UNLINK\n\
+p:    IN_ONESHOT\n\
+q:    IN_ONLYDIR\n\
+r:    IN_ALLEVENTS";
 
-
-static int inotify_mask = (IN_OPEN | IN_MODIFY),
-rgx_flags = (REG_NOSUB | REG_NEWLINE), inotify_fd = -1;
-
-static regex_t *rgx_file = 0, *rgx_dir = 0;
-
-static char *dir_rgx_pattern = NULL, *file_rgx_pattern = NULL, *cmd_str = NULL,
-**args_arr = NULL;
-
-void __attribute__((destructor)) clean()
+void on_sigs(int nr)
 {
-	if (cmd_str)
-		free(cmd_str);
+	watcher_stop();
+}
 
-	if (args_arr){
-		char **cp = args_arr;
-		while (cp && *cp)
-			free(*cp++);
-		free(args_arr);
+//TODO:XXX:: i hate this function its gigantic and repetitive , FIX THIS
+static int process_path(char *path, uint32_t mask, regex_t *file_rgx,
+                regex_t *dir_regex)
+{
+	struct stat st;
+	if (stat(path, &st)) {
+		pr_strerror("path");
+		return 0;
 	}
 
-	if (rgx_file)
-		regfree(rgx_file);
+	switch (st.st_mode & S_IFMT) {
+	case S_IFBLK:
+		fprintf(stderr, "Not a file or directory %s\n", path);
+		return 0;
+		break;
+	case S_IFDIR:
+	{
+		if (dir_regex && !match_rgx(dir_regex, path))
+			break;
 
-	if (rgx_dir)
-		regfree(rgx_dir);
+		DIR *dir_stream = NULL;
+		dir_stream = opendir(path);
 
-	if (-1 != inotify_fd)
-		close(inotify_fd);
+		if (!dir_stream) {
+			pr_strerror(path);
+			return 0;
+		}
+
+		struct dirent *dir_entry = NULL;
+		while ((dir_entry = readdir(dir_stream))) {
+
+			if (!strcmp(dir_entry->d_name, ".")
+			                || !strcmp(dir_entry->d_name, ".."))
+				continue;
+
+			char *complete_path = NULL;
+			int __attribute__((unused))foo =
+				asprintf(&complete_path, "%s%s%s", path,
+					path[strlen(path) - 1] != '/' ? "/" :
+						"", dir_entry->d_name);
+
+			switch (dir_entry->d_type) {
+			case DT_BLK:
+			case DT_UNKNOWN:
+			case DT_WHT:
+				free(complete_path);
+				closedir(dir_stream);
+				return 0;
+			case DT_DIR:
+			case DT_CHR:
+			case DT_FIFO:
+			case DT_LNK:
+			case DT_REG:
+			case DT_SOCK:
+				if (!process_path(complete_path, mask, file_rgx, dir_regex)) {
+					free(complete_path);
+					closedir(dir_stream);
+					return 0;
+				}
+				break;
+			}
+			free(complete_path);
+		}
+		closedir(dir_stream);
+		break;
+	}
+	case S_IFREG:
+		if (file_rgx && !match_rgx(file_rgx, path))
+			break;
+		if (!watcher_add(strdup(path), mask))
+			return 0;
+		break;
+	}
+	return 1;
 }
-
-static void pr_exit(int code, char *fmt,char *msg)
-{
-	FILE *stream = stdout;
-	if(code)
-		stream = stderr;
-	fprintf(stream, fmt, msg);
-	exit(code);
-}
-
-#define usage_exit(code) pr_exit(code, FMT_STR, usage)
 
 int main(int argc, char **argv)
 {
+	uint32_t inotify_mask = IN_ALL_EVENTS;
+	int rgx_flags = (REG_NOSUB | REG_NEWLINE);
+	int recur = 0;
 	int optc = -1;
-	while(1) {
+	int ret_code = 0;
+	regex_t *rgx_file = NULL;
+	regex_t*rgx_dir = NULL;
+	char *dir_rgx_pattern = NULL;
+	char *file_rgx_pattern = NULL;
+	char *cmd_str = NULL;
+	char **args_arr = NULL;
 
-		if (-1 == (optc = getopt(argc, argv, "c:f:him:")))
+	while (1) {
+
+		if (-1 == (optc = getopt(argc, argv, "c:f:him:d:")))
 			break;
 
-		switch(optc){
+		switch (optc) {
 		case 'c':
 			prep_cmd(optarg, &cmd_str, &args_arr);
 			break;
@@ -87,49 +154,73 @@ int main(int argc, char **argv)
 		case 'm':
 			set_mask(&inotify_mask, optarg);
 			break;
-		case 'h':/*yes gcc recognises fall through as not a "comment"*/
-			usage_exit(0);
-			/*fall through*/
+		case 'h':
+			fprintf(stdout, "%s\n", usage);
+			goto cleanup_exit;
 		case '?':
-			usage_exit(1);
+			ret_code = 1;
+			goto cleanup_exit;
 		}
 	}
 
-	if (file_rgx_pattern && 0 != comp_rgx(rgx_file, file_rgx_pattern,
-		rgx_flags))
-			return 1;
+	ret_code = 1;
 
-	if (dir_rgx_pattern &&  0 != comp_rgx(rgx_dir, dir_rgx_pattern,
-		rgx_flags))
-			return 1;
+	if (file_rgx_pattern
+	                && !comp_rgx(rgx_file, file_rgx_pattern, rgx_flags))
+		goto cleanup_exit;
+
+	if (dir_rgx_pattern && !comp_rgx(rgx_dir, dir_rgx_pattern, rgx_flags))
+		goto cleanup_exit;
 
 	argv += optind;
 
-	if (!*argv)
-		usage_exit(1);
+	if (!*argv) {
+		fprintf(stderr, "%s\n", usage);
+		goto cleanup_exit;
+	}
 
-	inotify_fd = inotify_init(IN_NONBLOCK);
-	if (-1 == (inotif_fd = inotify_init(IN_NONBLOCK)))
-		pr_exit(1, "inotify_init () : "FMT_STR, strerror(errno));
+	if (!watcher_init())
+		goto cleanup_exit;
 
-	struct stat st;
-	while(*argv) {
-		if (stat(*argv, &st))
-			pr_exit(1, FMT_STR, strerror(errno));
+	runner_init(cmd_str, args_arr);
 
-		switch(st.st_mode & S_IFMT) {
-		case S_IFBLK:
-		case S_IFDIR:
-		case S_IFCHR:
-		case S_IFIFO:
-		case S_IFREG:
-		case S_IFLNK:
-		case S_IFSOCK:
-			break;
-		default:
-			pr_exit(1, "not a file or directory"FMT_STR, *argv);
-		}
+	while (*argv) {
+		if (!process_path(*argv, inotify_mask, rgx_file, rgx_dir))
+			goto cleanup_exit;
 		++argv;
 	}
-	return 0;
+
+	if (!reg_sig(SIGINT, on_sigs, 0, 0)) {
+		pr_strerror("reg_sig(SIGINT)");
+		goto cleanup_exit;
+	}
+
+	if (!reg_sig(SIGQUIT, on_sigs, 0, 0)) {
+		pr_strerror("reg_sig(SIGQUIT)");
+		goto cleanup_exit;
+	}
+
+	watcher_start();
+	watcher_stop();
+	ret_code = 0;
+
+cleanup_exit:
+	if (rgx_file)
+		regfree(rgx_file);
+
+	if (rgx_dir)
+		regfree(rgx_dir);
+
+	if (cmd_str)
+		free(cmd_str);
+
+	if (args_arr) {
+		char **p = args_arr;
+		while (*p) {
+			free(*p);
+			++p;
+		}
+		free(args_arr);
+	}
+	return ret_code;
 }
