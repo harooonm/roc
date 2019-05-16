@@ -10,14 +10,14 @@ struct wd {
 	int descriptor;
 	int mask;
 	char *path;
-}__attribute__((packed));
+};
 
-static struct pollfd in_fd [1];
+static struct pollfd in_fd[1];
 static btree_t *watches = NULL;
 
 int watcher_init(void)
 {
-	if ((in_fd[0].fd = inotify_init()) == -1)
+	if ((in_fd[0].fd = inotify_init1(IN_NONBLOCK)) == -1)
 		pr_strerror("inotify init");
 	return -1 != in_fd[0].fd;
 }
@@ -33,27 +33,27 @@ int comp_wd(void *old, void *new)
 	return -1;
 }
 
-int watcher_add(char *path, uint32_t mask)
+int watcher_add(char *path, uint32_t mask, int pr_err)
 {
-	assert(path);
 	int descriptor = inotify_add_watch(in_fd[0].fd, path, mask);
 	if (-1 == descriptor) {
-		pr_strerror("inotify_add_watch");
+		if (pr_err)
+			pr_strerror("inotify_add_watch");
 		return 0;
 	}
 	struct wd *w = calloc(1, sizeof(struct wd));
 	w->descriptor = descriptor;
 	w->mask = mask;
-	w->path = path;
+	w->path = strdup(path);
 	add_tree_node(&watches, w, comp_wd);
 	return 1;
 }
 
 void free_wd(void *data)
 {
-	struct wd * w = (struct wd *)data;
+	struct wd * w = (struct wd *) data;
 	inotify_rm_watch(in_fd[0].fd, w->descriptor);
-	if(w->path)
+	if (w->path)
 		free(w->path);
 	free(w);
 }
@@ -64,11 +64,13 @@ void watcher_start(void)
 		return;
 
 	in_fd[0].events = POLLIN | POLLNVAL | POLLERR;
-	while(1) {
-		int poll_res = poll(&in_fd[0], 1, -1);
-		if (-1 == poll_res){
+	while (1) {
+		if (!watches)
+			break;
+		int poll_res = poll(&in_fd[0], 1, 500);
+		if (-1 == poll_res) {
 			if (EINTR != errno)
-				pr_strerror("pollu");
+				pr_strerror("poll");
 			break;
 		}
 
@@ -80,49 +82,65 @@ void watcher_start(void)
 			break;
 		}
 
-		size_t min_read_sz = sizeof(struct inotify_event) + NAME_MAX + 1;
+		size_t min_read_sz = sizeof(struct inotify_event) + NAME_MAX
+		                + 1;
 
-		char buf [min_read_sz];
-
+		char buf[min_read_sz];
+		memset(&buf, 0, min_read_sz);
 		size_t bytes_in = read(in_fd[0].fd, buf, min_read_sz);
 
 		if (bytes_in <= 0)
 			continue;
 
-		char *buf_p = (char *)&buf;
-		while(bytes_in > 0) {
-			struct inotify_event *ev = (struct inotify_event *)buf_p;
+		char *buf_p = (char *) &buf;
+		while (bytes_in > 0) {
+			struct inotify_event *ev =
+			                (struct inotify_event *) buf_p;
+			size_t step = sizeof(struct inotify_event) + ev->len;
+
+			btree_t *descriptor = find_tree_node(&watches,
+			                &((struct wd) {ev->wd, 0,0 } ),
+					comp_wd);
+			if (!descriptor)
+				goto forward;
+
+			struct wd *_wd = ((struct wd *)(descriptor)->data);
 
 			/*check exceptional masks*/
-			if (ev->mask & (IN_IGNORED | IN_UNMOUNT)){
-				del_tree_node(&watches,
-					&((struct wd){ev->wd, 0, 0}),
-						comp_wd, free_wd);
-				continue;
+			if (ev->mask & (IN_UNMOUNT | IN_IGNORED)) {
+				if (!watcher_add(_wd->path, _wd->mask, 0)) {
+					del_tree_node(&watches, &((struct wd)
+						{ ev->wd, 0, 0}), comp_wd,
+							free_wd);
+					goto forward;
+				}
+				runner_run(_wd->path, ev->name,
+					get_mask_info('\0', IN_MODIFY)->name);
+				del_tree_node(&watches, &((struct wd)
+					{ ev->wd, 0, 0}), comp_wd, free_wd);
+				goto forward;
 			}
 
 			if (ev->mask & IN_Q_OVERFLOW)
-				continue;
+				goto forward;
 
-			btree_t *descriptor = find_tree_node(&watches,
-				&(struct wd){ev->wd, 0, 0}, comp_wd);
-			if (!descriptor ||
-				(descriptor &&
-					(!(((struct wd *)(descriptor->data))->mask
-						& ev->mask)))) {
-				continue;
+			if (ev->mask & IN_ISDIR) {
+				ev->mask &= ~IN_ISDIR;
+				goto forward;
 			}
 
-			if (ev->mask & IN_ISDIR)
-				ev->mask &= ~IN_ISDIR;
 
-			runner_run(((struct wd *)descriptor->data)->path,
+			if (!(_wd->mask & ev->mask))
+				goto forward;
+
+			runner_run(_wd->path, ev->name,
 				get_mask_info('\0', ev->mask)->name);
+forward:
+	bytes_in -= step;
+	buf_p += step;
 
-			size_t step = sizeof(struct inotify_event) + ev->len;
-			bytes_in -= step;
-			buf_p += step;
 		}
+		memset(&buf, 0, min_read_sz);
 	}
 }
 
