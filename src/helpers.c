@@ -1,26 +1,35 @@
 #include "roc.h"
 #include "roc_common.h"
 
-struct inotify_mask *get_mask_info(char c, uint32_t mask)
+int set_mask(uint32_t *mask, char *mask_str, size_t masks_len)
 {
-	struct inotify_mask *m = imasks;
-	while (m->abbrv != '\0') {
-		if ((c != '\0' && c == m->abbrv)
-		                || (mask != -1 && mask == m->mask))
-			break;
-		++m;
-	}
-	return m;
-}
+	while (*mask_str) {
+		char mask_char = *mask_str;
 
-void set_mask(uint32_t *mask, char *mask_str)
-{
-	while (mask_str && *mask_str != '\0') {
-		struct inotify_mask *m = get_mask_info(*mask_str, -1);
-		if (m)
-			*mask |= m->mask;
+		int id = (mask_char - 'a');
+
+		if (id < 0 || id >= masks_len) {
+			fprintf(stdout, "invalid mask %c ", mask_char);
+			return 0;
+		}
+
+		if (id >= 12 && id <= 14)
+			id += 12;
+
+		*mask |= (1 << id);
 		++mask_str;
 	}
+	return 1;
+}
+
+char get_mask(uint32_t mask_val)
+{
+	uint32_t i = 0;
+	while(i < NR_MASKS) {
+		if (!(mask_val & (1 << i++)))
+			return 'a' + i;
+	}
+	return 'X';
 }
 
 void prep_cmd(char *from, char **cmd_str, char ***args_arr)

@@ -1,4 +1,5 @@
 #include "roc_common.h"
+#include "roc.h"
 #include <sys/inotify.h>
 #include "runner.h"
 #include <limits.h>
@@ -38,14 +39,16 @@ int watcher_add(char *path, uint32_t mask, int pr_err)
 	int descriptor = inotify_add_watch(in_fd[0].fd, path, mask);
 	if (-1 == descriptor) {
 		if (pr_err)
-			pr_strerror("inotify_add_watch");
+			pr_strerror(path);
 		return 0;
 	}
 	struct wd *w = calloc(1, sizeof(struct wd));
 	w->descriptor = descriptor;
 	w->mask = mask;
 	w->path = strdup(path);
+
 	add_tree_node(&watches, w, comp_wd);
+
 	return 1;
 }
 
@@ -60,13 +63,12 @@ void free_wd(void *data)
 
 void watcher_start(void)
 {
-	if (!watches)
-		return;
-
 	in_fd[0].events = POLLIN | POLLNVAL | POLLERR;
 	while (1) {
+
 		if (!watches)
 			break;
+
 		int poll_res = poll(&in_fd[0], 1, 500);
 		if (-1 == poll_res) {
 			if (EINTR != errno)
@@ -115,7 +117,7 @@ void watcher_start(void)
 					goto forward;
 				}
 				runner_run(_wd->path, ev->name,
-					get_mask_info('\0', IN_MODIFY)->name);
+					get_mask(IN_MODIFY));
 				del_tree_node(&watches, &((struct wd)
 					{ ev->wd, 0, 0}), comp_wd, free_wd);
 				goto forward;
@@ -133,8 +135,7 @@ void watcher_start(void)
 			if (!(_wd->mask & ev->mask))
 				goto forward;
 
-			runner_run(_wd->path, ev->name,
-				get_mask_info('\0', ev->mask)->name);
+			runner_run(_wd->path, ev->name, get_mask(ev->mask));
 forward:
 	bytes_in -= step;
 	buf_p += step;
@@ -148,6 +149,10 @@ void watcher_stop(void)
 {
 	if (-1 != in_fd[0].fd)
 		close(in_fd[0].fd);
+
+	in_fd[0].fd = -1;
+
 	runner_stop();
+
 	free_tree(&watches, free_wd);
 }
