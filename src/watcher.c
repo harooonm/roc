@@ -70,8 +70,7 @@ void watcher_start(void)
 
 		int poll_res = poll(&in_fd[0], 1, 500);
 		if (-1 == poll_res) {
-			if (EINTR != errno)
-				pr_strerror("poll");
+			pr_strerror("poll");
 			break;
 		}
 

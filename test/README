@@ -1,0 +1,10 @@
+cases
+	invalid masks
+	invalid path
+
+indiviual mask tests
+	file
+	dir
+	files inside dir
+
+test signaling

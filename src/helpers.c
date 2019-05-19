@@ -9,7 +9,7 @@ int set_mask(uint32_t *mask, char *mask_str, int masks_len)
 		int id = (mask_char - 'a');
 
 		if (id < 0 || id >= masks_len) {
-			fprintf(stdout, "invalid mask %c ", mask_char);
+			fprintf(stdout, "invalid mask %c\n", mask_char);
 			return 0;
 		}
 
