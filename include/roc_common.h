@@ -6,8 +6,8 @@
 #include <errno.h>
 #include <sys/inotify.h>
 #include <stdlib.h>
-#include <regex.h>
 
 #define FMT_STR "%s\n"
 #define pr_strerror(extra) fprintf(stdout, "%s "FMT_STR, extra, strerror(errno))
+
 #endif
