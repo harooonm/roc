@@ -9,6 +9,5 @@
 #include <regex.h>
 
 #define NR_MASKS 17
-#define FMT_STR "%s\n"
-#define pr_strerror(extra) fprintf(stdout, "%s "FMT_STR, extra, strerror(errno))
+#define pr_strerror(extra) fprintf(stdout, "%s %s\n", extra, strerror(errno))
 #endif

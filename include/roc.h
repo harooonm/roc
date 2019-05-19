@@ -5,7 +5,7 @@
 #include <sys/types.h>
 
 extern char get_mask(uint32_t mask_val);
-extern int set_mask(uint32_t *mask, char *mask_str, size_t masks_len);
+extern int set_mask(uint32_t *mask, char *mask_str, int masks_len);
 extern void prep_cmd(char *from , char **cmd_str, char ***args_arr);
 extern int watcher_init(void);
 extern int watcher_add(char *path, uint32_t mask, int pr_err);

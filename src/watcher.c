@@ -6,7 +6,7 @@
 #include <unistd.h>
 #include <poll.h>
 #include "libbtree.h"
-
+#include <string.h>
 struct wd {
 	int descriptor;
 	int mask;
@@ -56,8 +56,7 @@ void free_wd(void *data)
 {
 	struct wd * w = (struct wd *) data;
 	inotify_rm_watch(in_fd[0].fd, w->descriptor);
-	if (w->path)
-		free(w->path);
+	free(w->path);
 	free(w);
 }
 
@@ -123,16 +122,13 @@ void watcher_start(void)
 				goto forward;
 			}
 
-			if (ev->mask & IN_Q_OVERFLOW)
-				goto forward;
-
 			if (ev->mask & IN_ISDIR) {
 				ev->mask &= ~IN_ISDIR;
 				goto forward;
 			}
 
-
-			if (!(_wd->mask & ev->mask))
+			if ((!(_wd->mask & ev->mask)) ||
+				(ev->mask & IN_Q_OVERFLOW))
 				goto forward;
 
 			runner_run(_wd->path, ev->name, get_mask(ev->mask));

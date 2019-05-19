@@ -1,7 +1,7 @@
 #include "roc.h"
 #include "roc_common.h"
 
-int set_mask(uint32_t *mask, char *mask_str, size_t masks_len)
+int set_mask(uint32_t *mask, char *mask_str, int masks_len)
 {
 	while (*mask_str) {
 		char mask_char = *mask_str;
@@ -13,9 +13,19 @@ int set_mask(uint32_t *mask, char *mask_str, size_t masks_len)
 			return 0;
 		}
 
-		if (id >= 12 && id <= 14)
-			id += 12;
-
+		switch(id)
+		{
+			case 12:
+			case 13:
+			case 14:
+				id += 12;
+				break;
+			case 15:
+			case 16:
+				*mask = (1 << 31);
+				++mask_str;
+				continue;
+		}
 		*mask |= (1 << id);
 		++mask_str;
 	}

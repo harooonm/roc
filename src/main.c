@@ -6,7 +6,7 @@
 #include "roc_common.h"
 #include "runner.h"
 #include <dirent.h>
-#include "sig_handler.h"
+#include "sighandler.h"
 
 char *cmd_str = NULL;
 char **args_arr = NULL;
@@ -52,10 +52,11 @@ q:    IN_ALLEVENTS";
 	"m" IN_ONLYDIR       m = 109, 2^24
 	"n" IN_DONT_FOLLOW   n = 110  2^25
 	"o" IN_EXCL_UNLINK   o = 111  2^26
-	"p" IN_ONSESHOT      p = 112  2^31;
+	"p" IN_ONSESHOT      p = 112  2^31
+	"q" IN_ALL_EVENTS    q = 113;
 */
 
-void on_sigs(int nr)
+void on_sigs(int __attribute__((unused)) nr)
 {
 	watcher_stop();
 }

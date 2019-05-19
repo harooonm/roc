@@ -1,7 +1,7 @@
 #include "roc_common.h"
 #include <unistd.h>
 #include <sys/wait.h>
-
+#include <signal.h>
 extern char *cmd_str;
 extern char **args_arr;
 static pid_t child_pid = -1;
