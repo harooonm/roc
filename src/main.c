@@ -97,11 +97,7 @@ static int process_dir(char *path, uint32_t mask)
 			if (!process_dir(complete_path, mask))
 				goto break_loop;
 			break;
-		case DT_CHR:
-		case DT_FIFO:
-		case DT_LNK:
-		case DT_REG:
-		case DT_SOCK:
+		default:
 			if (!watcher_add(complete_path, mask, 1))
 				goto break_loop;
 			break;
