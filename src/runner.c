@@ -30,9 +30,9 @@ void runner_run(char *s_path, char *e_path, char mask_char)
 
 void runner_stop()
 {
-	if (-1 != child_pid) {
-		if (0  == kill(child_pid, 0))
-			kill(child_pid, SIGKILL);
-		child_pid = -1;
-	}
+	if (-1 == child_pid)
+		return;
+	if (0  == kill(child_pid, 0))
+		kill(child_pid, SIGKILL);
+	child_pid = -1;
 }
