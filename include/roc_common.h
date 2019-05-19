@@ -7,7 +7,6 @@
 #include <sys/inotify.h>
 #include <stdlib.h>
 
-#define FMT_STR "%s\n"
-#define pr_strerror(extra) fprintf(stdout, "%s "FMT_STR, extra, strerror(errno))
-
+#define NR_MASKS 17
+#define pr_strerror(extra) fprintf(stdout, "%s %s\n", extra, strerror(errno))
 #endif
