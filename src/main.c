@@ -2,6 +2,7 @@
 #include <getopt.h>
 #include <sysexits.h>
 #include <sys/stat.h>
+#include <regex.h>
 #include "roc.h"
 #include "roc_common.h"
 #include "runner.h"
@@ -10,12 +11,17 @@
 
 char *cmd_str = NULL;
 char **args_arr = NULL;
+regex_t *rgx_dir = NULL;
+regex_t *rgx_file = NULL;
 
 static char *usage = "Usage:\n\
- roc -[fchmd] [FILE...] [DIR..]\n\
+ roc -[chmfd] [FILE...] [DIR..]\n\
  -c,    run this command\n\
  -h,    print help and exit\n\
  -m,    mask\n\
+ -f,    ignore files matching this regex\n\
+ -d,    ignore directories matching this regex\n\
+ -i,    case insensitive regex\n\
 by default reports all events to stdout\n\n\
 valid values for mask\n\
 a:    IN_ACCESS\n\
@@ -120,8 +126,11 @@ int main(int argc, char **argv)
 	uint32_t inotify_mask = IN_MODIFY;
 	int optc = -1;
 	int ret_code = 0;
+	int rgx_flags = (REG_NOSUB | REG_NEWLINE);
+	char *opt_f = NULL;
+	char *opt_d = NULL;
 
-	while (-1 != (optc = getopt(argc, argv, "c:hm:"))) {
+	while (-1 != (optc = getopt(argc, argv, "c:hm:d:fi"))) {
 		switch (optc) {
 		case 'c':
 			prep_cmd(optarg, &cmd_str, &args_arr);
@@ -129,6 +138,17 @@ int main(int argc, char **argv)
 		case 'm':
 			if(!set_mask(&inotify_mask, optarg, NR_MASKS))
 				goto cleanup_exit;
+			break;
+		case 'd':
+			rgx_dir = calloc(1, sizeof(regex_t));
+			opt_d = optarg;
+			break;
+		case 'f':
+			rgx_file = calloc(1, sizeof(regex_t));
+			opt_f = optarg;
+			break;
+		case 'i':
+			rgx_flags |= REG_ICASE;
 			break;
 		case 'h':
 			fprintf(stdout, "%s\n", usage);
@@ -150,6 +170,20 @@ int main(int argc, char **argv)
 
 	if (!watcher_init())
 		goto cleanup_exit;
+
+	if (rgx_dir) {
+		if (regcomp(rgx_dir, opt_d, rgx_flags)) {
+			fprintf(stderr, "invalid regex %s\n", opt_d);
+			goto cleanup_exit;
+		}
+	}
+
+	if (rgx_file) {
+		if (regcomp(rgx_file, opt_f, rgx_flags)) {
+			fprintf(stderr, "invalid regex %s\n", opt_d);
+			goto cleanup_exit;
+		}
+	}
 
 	struct stat st;
 	while (*argv) {
@@ -196,5 +230,12 @@ cleanup_exit:
 		free(*p++);
 	if (args_arr)
 		free(args_arr);
+
+	if (rgx_dir)
+		regfree(rgx_dir);
+
+	if (rgx_file)
+		regfree(rgx_file);
+
 	return ret_code;
 }

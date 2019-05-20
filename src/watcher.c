@@ -48,7 +48,6 @@ int watcher_add(char *path, uint32_t mask, int pr_err)
 	w->path = strdup(path);
 
 	add_tree_node(&watches, w, comp_wd);
-
 	return 1;
 }
 
@@ -70,7 +69,8 @@ void watcher_start(void)
 
 		int poll_res = poll(&in_fd[0], 1, 500);
 		if (-1 == poll_res) {
-			pr_strerror("poll");
+			if (EINTR != errno)
+				pr_strerror("pollu");
 			break;
 		}
 
