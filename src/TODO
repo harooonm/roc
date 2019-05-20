@@ -1,2 +1,0 @@
-separate tree library from libsighandler to be used here
-saves code duplication
